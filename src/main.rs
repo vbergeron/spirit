@@ -1,6 +1,5 @@
+pub mod env;
 pub mod functions;
-
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpiritValue {
@@ -17,60 +16,69 @@ pub enum SpiritValue {
     Cond(Box<SpiritValue>, Box<SpiritValue>, Box<SpiritValue>),
 }
 
-fn reduce(argname: String, argvalue: SpiritValue, subject: SpiritValue) -> SpiritValue {
-    return match subject {
-        SpiritValue::Const(v) => SpiritValue::Const(v),
-        SpiritValue::Lit(name) => {
-            if name == argname {
-                argvalue
-            } else {
-                SpiritValue::Lit(name)
-            }
-        }
-        SpiritValue::Let(name, head, body) => SpiritValue::Let(
-            name,
-            Box::new(reduce(argname.clone(), argvalue.clone(), *head)),
-            Box::new(reduce(argname.clone(), argvalue.clone(), *body)),
-        ),
-        SpiritValue::Function(name, code) => SpiritValue::Function(
-            name,
-            Box::new(reduce(argname.clone(), argvalue.clone(), *code)),
-        ),
-        SpiritValue::Apply(func, argv) => SpiritValue::Apply(
-            Box::new(reduce(argname.clone(), argvalue.clone(), *func)),
-            Box::new(reduce(argname.clone(), argvalue.clone(), *argv)),
-        ),
-        SpiritValue::Native2(lhs, rhs, nativefn) => SpiritValue::Native2(
-            Box::new(reduce(argname.clone(), argvalue.clone(), *lhs)),
-            Box::new(reduce(argname.clone(), argvalue.clone(), *rhs)),
-            nativefn,
-        ),
-        SpiritValue::Cond(cond, body, fallback) => SpiritValue::Cond(
-            Box::new(reduce(argname.clone(), argvalue.clone(), *cond)),
-            Box::new(reduce(argname.clone(), argvalue.clone(), *body)),
-            Box::new(reduce(argname.clone(), argvalue.clone(), *fallback)),
-        ),
-    };
-}
+//fn reduce(argname: String, argvalue: SpiritValue, subject: SpiritValue) -> SpiritValue {
+//    return match subject {
+//        SpiritValue::Const(v) => SpiritValue::Const(v),
+//        SpiritValue::Lit(name) => {
+//            if name == argname {
+//                argvalue
+//            } else {
+//                SpiritValue::Lit(name)
+//            }
+//        }
+//        SpiritValue::Let(name, head, body) => SpiritValue::Let(
+//            name,
+//            Box::new(reduce(argname.clone(), argvalue.clone(), *head)),
+//            Box::new(reduce(argname.clone(), argvalue.clone(), *body)),
+//        ),
+//        SpiritValue::Function(name, code) => SpiritValue::Function(
+//            name,
+//            Box::new(reduce(argname.clone(), argvalue.clone(), *code)),
+//        ),
+//        SpiritValue::Apply(func, argv) => SpiritValue::Apply(
+//            Box::new(reduce(argname.clone(), argvalue.clone(), *func)),
+//            Box::new(reduce(argname.clone(), argvalue.clone(), *argv)),
+//        ),
+//        SpiritValue::Native2(lhs, rhs, nativefn) => SpiritValue::Native2(
+//            Box::new(reduce(argname.clone(), argvalue.clone(), *lhs)),
+//            Box::new(reduce(argname.clone(), argvalue.clone(), *rhs)),
+//            nativefn,
+//        ),
+//        SpiritValue::Cond(cond, body, fallback) => SpiritValue::Cond(
+//            Box::new(reduce(argname.clone(), argvalue.clone(), *cond)),
+//            Box::new(reduce(argname.clone(), argvalue.clone(), *body)),
+//            Box::new(reduce(argname.clone(), argvalue.clone(), *fallback)),
+//        ),
+//    };
+//}
 
-fn eval(env: &mut HashMap<String, SpiritValue>, value: SpiritValue) -> Result<SpiritValue, String> {
-    println!("{:?}", value);
+fn eval(env: &mut env::Env, value: SpiritValue) -> Result<SpiritValue, String> {
     return match value {
         SpiritValue::Const(v) => Ok(SpiritValue::Const(v)),
 
-        SpiritValue::Lit(name) => Err(format!("symbol {} was not reduced", name)),
-        //match env.get(&name) {
-        //    Some(expr) => Result::Ok(eval(env, expr.clone())?),
-        //    None => Result::Err(format!("undefined variable {}", name).to_string()),
-        //},
-        SpiritValue::Let(name, head, body) => eval(env, reduce(name, *head, *body)),
+        SpiritValue::Lit(name) => match env.get_var(name) {
+            Some(expr) => Result::Ok(eval(env, expr.clone())?),
+            None => Result::Err("oops undefined variable".to_string()),
+        },
+
+        SpiritValue::Let(name, head, body) => {
+            let define = eval(env, *head)?;
+            env.add_var(name.clone(), define);
+            let res = eval(env, *body)?;
+            env.del_var(name);
+            Ok(res)
+        }
 
         SpiritValue::Function(argname, body) => Ok(SpiritValue::Function(argname, body)),
 
         SpiritValue::Apply(func, argvalue) => match eval(env, *func)? {
             SpiritValue::Function(argname, funcbody) => {
-                let res = reduce(argname.clone(), *argvalue, *funcbody);
-                eval(env, res)
+                env.frame_push();
+                env.add_var(argname.clone(), eval(&mut env.clone(), *argvalue)?);
+                let res = eval(env, *funcbody)?;
+                env.del_var(argname);
+                env.frame_pop();
+                Ok(res)
             }
             other => {
                 Result::Err(format!("calling {:?} which is not a function", other).to_string())
@@ -125,6 +133,16 @@ where
             ))
         }
 
+        "eq" => {
+            let lhs = parse(tokens)?;
+            let rhs = parse(tokens)?;
+            Some(SpiritValue::Native2(
+                Box::new(lhs),
+                Box::new(rhs),
+                functions::eq,
+            ))
+        }
+
         "def" => {
             let argname = tokens.next()?.to_string();
             tokens.next().filter(|x| x == "->");
@@ -162,7 +180,7 @@ fn read() -> String {
 }
 
 fn main() {
-    let mut env: HashMap<String, SpiritValue> = HashMap::new();
+    let mut env = env::Env::new();
 
     loop {
         let line = read();

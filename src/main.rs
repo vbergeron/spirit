@@ -1,3 +1,5 @@
+use std::io::Write;
+
 pub mod env;
 pub mod functions;
 
@@ -8,49 +10,9 @@ pub enum SpiritValue {
     Let(String, Box<SpiritValue>, Box<SpiritValue>),
     Function(String, Box<SpiritValue>),
     Apply(Box<SpiritValue>, Box<SpiritValue>),
-    Native2(
-        Box<SpiritValue>,
-        Box<SpiritValue>,
-        fn(SpiritValue, SpiritValue) -> Result<SpiritValue, String>,
-    ),
+    Native2(String, Box<SpiritValue>, Box<SpiritValue>),
     Cond(Box<SpiritValue>, Box<SpiritValue>, Box<SpiritValue>),
 }
-
-//fn reduce(argname: String, argvalue: SpiritValue, subject: SpiritValue) -> SpiritValue {
-//    return match subject {
-//        SpiritValue::Const(v) => SpiritValue::Const(v),
-//        SpiritValue::Lit(name) => {
-//            if name == argname {
-//                argvalue
-//            } else {
-//                SpiritValue::Lit(name)
-//            }
-//        }
-//        SpiritValue::Let(name, head, body) => SpiritValue::Let(
-//            name,
-//            Box::new(reduce(argname.clone(), argvalue.clone(), *head)),
-//            Box::new(reduce(argname.clone(), argvalue.clone(), *body)),
-//        ),
-//        SpiritValue::Function(name, code) => SpiritValue::Function(
-//            name,
-//            Box::new(reduce(argname.clone(), argvalue.clone(), *code)),
-//        ),
-//        SpiritValue::Apply(func, argv) => SpiritValue::Apply(
-//            Box::new(reduce(argname.clone(), argvalue.clone(), *func)),
-//            Box::new(reduce(argname.clone(), argvalue.clone(), *argv)),
-//        ),
-//        SpiritValue::Native2(lhs, rhs, nativefn) => SpiritValue::Native2(
-//            Box::new(reduce(argname.clone(), argvalue.clone(), *lhs)),
-//            Box::new(reduce(argname.clone(), argvalue.clone(), *rhs)),
-//            nativefn,
-//        ),
-//        SpiritValue::Cond(cond, body, fallback) => SpiritValue::Cond(
-//            Box::new(reduce(argname.clone(), argvalue.clone(), *cond)),
-//            Box::new(reduce(argname.clone(), argvalue.clone(), *body)),
-//            Box::new(reduce(argname.clone(), argvalue.clone(), *fallback)),
-//        ),
-//    };
-//}
 
 fn eval(env: &mut env::Env, value: SpiritValue) -> Result<SpiritValue, String> {
     return match value {
@@ -85,8 +47,16 @@ fn eval(env: &mut env::Env, value: SpiritValue) -> Result<SpiritValue, String> {
             }
         },
 
-        SpiritValue::Native2(arg0, arg1, nativefn) => {
-            nativefn(eval(env, *arg0)?, eval(env, *arg1)?)
+        SpiritValue::Native2(name, arg0, arg1) => {
+            let mut nenv = env.clone();
+            match env.get_native(name.clone()) {
+                Some(f) => {
+                    let _arg0 = eval(&mut nenv, *arg0)?;
+                    let _arg1 = eval(&mut nenv, *arg1)?;
+                    f(vec![_arg0, _arg1])
+                }
+                None => Err(format!("native function {} not defined", name)),
+            }
         }
 
         SpiritValue::Cond(cond, body, fallback) => {
@@ -99,7 +69,7 @@ fn eval(env: &mut env::Env, value: SpiritValue) -> Result<SpiritValue, String> {
     };
 }
 
-fn parse<Tokens>(tokens: &mut Tokens) -> Option<SpiritValue>
+fn parse_iter<Tokens>(tokens: &mut Tokens) -> Option<SpiritValue>
 where
     Tokens: Iterator<Item = String>,
 {
@@ -107,9 +77,9 @@ where
         "let" => {
             let name = tokens.next()?.to_string();
             tokens.next().filter(|x| x == "=");
-            let head = parse(tokens)?;
+            let head = parse_iter(tokens)?;
             tokens.next().filter(|x| x == "in");
-            let body = parse(tokens)?;
+            let body = parse_iter(tokens)?;
             Some(SpiritValue::Let(
                 name.to_string(),
                 Box::new(head),
@@ -118,35 +88,22 @@ where
         }
 
         "apply" => {
-            let func = parse(tokens)?;
-            let arg = parse(tokens)?;
+            let func = parse_iter(tokens)?;
+            let arg = parse_iter(tokens)?;
             Some(SpiritValue::Apply(Box::new(func), Box::new(arg)))
         }
 
-        "add" => {
-            let lhs = parse(tokens)?;
-            let rhs = parse(tokens)?;
-            Some(SpiritValue::Native2(
-                Box::new(lhs),
-                Box::new(rhs),
-                functions::add,
-            ))
-        }
-
-        "eq" => {
-            let lhs = parse(tokens)?;
-            let rhs = parse(tokens)?;
-            Some(SpiritValue::Native2(
-                Box::new(lhs),
-                Box::new(rhs),
-                functions::eq,
-            ))
+        "native2" => {
+            let name = tokens.next()?.to_string();
+            let lhs = parse_iter(tokens)?;
+            let rhs = parse_iter(tokens)?;
+            Some(SpiritValue::Native2(name, Box::new(lhs), Box::new(rhs)))
         }
 
         "def" => {
             let argname = tokens.next()?.to_string();
             tokens.next().filter(|x| x == "->");
-            let funcbody = parse(tokens)?;
+            let funcbody = parse_iter(tokens)?;
             Some(SpiritValue::Function(
                 argname.to_string(),
                 Box::new(funcbody),
@@ -154,11 +111,11 @@ where
         }
 
         "if" => {
-            let cond = parse(tokens)?;
+            let cond = parse_iter(tokens)?;
             tokens.next().filter(|x| x == "then");
-            let body = parse(tokens)?;
+            let body = parse_iter(tokens)?;
             tokens.next().filter(|x| x == "else");
-            let fallback = parse(tokens)?;
+            let fallback = parse_iter(tokens)?;
             Some(SpiritValue::Cond(
                 Box::new(cond),
                 Box::new(body),
@@ -173,20 +130,35 @@ where
     }
 }
 
+fn parse(code: String) -> SpiritValue {
+    let mut tokens = code.split_whitespace().map(|x| x.to_string());
+    parse_iter(&mut tokens).unwrap()
+}
+
 fn read() -> String {
+    print!("spirit> ");
+    std::io::stdout().flush().unwrap();
     let mut buffer = String::new();
     std::io::stdin().read_line(&mut buffer).unwrap();
     return buffer;
 }
 
+fn print(res:Result<SpiritValue, String>) -> () {
+    print!("> ");
+    match res {
+        Ok(result) => 
+        println!("{:?}", result),
+        Err(err) => println!("ERROR : {:?}", err),
+    }
+}
+
 fn main() {
-    let mut env = env::Env::new();
+    let mut env = env::Env::new(false);
+    env.add_native("native:add".to_string(), functions::add);
+    env.add_native("native:mul".to_string(), functions::mul);
+    env.add_native("native:eq".to_string(), functions::eq);
 
     loop {
-        let line = read();
-        let mut tokens = line.split_whitespace().map(|x| x.to_string());
-        let code = parse(&mut tokens).unwrap();
-        let result = eval(&mut env, code);
-        println!("{:?}", result);
+        print(eval(&mut env, parse(read())));
     }
 }

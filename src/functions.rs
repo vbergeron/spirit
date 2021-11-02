@@ -11,10 +11,27 @@ fn numeric_op(
     }
 }
 
-pub fn add(lhs: SpiritValue, rhs: SpiritValue) -> Result<SpiritValue, String> {
+fn unpack2(mut args: Vec<SpiritValue>) -> Result<(SpiritValue, SpiritValue), String> {
+    if args.len() == 2 {
+        let arg1 = args.pop().ok_or("err".to_string())?;
+        let arg0 = args.pop().ok_or("err".to_string())?;
+        Ok((arg0, arg1))
+    } else {
+        Err(format!("wrong arity: expected {}, got {}", 2, args.len()))
+    }
+}
+
+pub fn add(args: Vec<SpiritValue>) -> Result<SpiritValue, String> {
+    let (lhs, rhs) = unpack2(args)?;
     numeric_op(lhs, rhs, |x, y| x + y)
 }
 
-pub fn eq(lhs: SpiritValue, rhs: SpiritValue) -> Result<SpiritValue, String> {
+pub fn mul(args: Vec<SpiritValue>) -> Result<SpiritValue, String> {
+    let (lhs, rhs) = unpack2(args)?;
+    numeric_op(lhs, rhs, |x, y| x * y)
+}
+
+pub fn eq(args: Vec<SpiritValue>) -> Result<SpiritValue, String> {
+    let (lhs, rhs) = unpack2(args)?;
     numeric_op(lhs, rhs, |x, y| if x == y { 1 } else { 0 })
 }

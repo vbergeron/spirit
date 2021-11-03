@@ -1,10 +1,10 @@
-use crate::SpiritValue;
+use crate::AST;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct Env {
-    vars: HashMap<EnvKey, SpiritValue>,
-    natives: HashMap<String, fn(Vec<SpiritValue>) -> Result<SpiritValue, String>>,
+    vars: HashMap<EnvKey, AST>,
+    natives: HashMap<String, fn(Vec<AST>) -> Result<AST, String>>,
     frames: u8,
     debug: bool,
 }
@@ -26,12 +26,16 @@ impl EnvKey {
 
 impl Env {
     pub fn new(debug: bool) -> Env {
-        Env {
+        return Env {
             vars: HashMap::new(),
             natives: HashMap::new(),
             frames: 1,
             debug: debug,
-        }
+        };
+    }
+
+    pub fn debug(&self) -> bool {
+        self.debug
     }
 
     pub fn frame_push(&mut self) -> () {
@@ -48,7 +52,7 @@ impl Env {
         self.frames -= 1;
     }
 
-    pub fn add_var(&mut self, name: String, value: SpiritValue) -> () {
+    pub fn add_var(&mut self, name: String, value: AST) -> () {
         let key = EnvKey::new(self.frames, name);
         if self.debug {
             println!("{}: SET {:?} <- {:?}", self.frames, key, value);
@@ -56,7 +60,7 @@ impl Env {
         self.vars.insert(key, value);
     }
 
-    pub fn get_var(&self, name: String) -> Option<&SpiritValue> {
+    pub fn get_var(&self, name: String) -> Option<&AST> {
         let mut i: u8 = self.frames;
 
         while i > 0 {
@@ -83,18 +87,11 @@ impl Env {
         self.vars.remove(&key);
     }
 
-    pub fn add_native(
-        &mut self,
-        name: String,
-        value: fn(Vec<SpiritValue>) -> Result<SpiritValue, String>,
-    ) -> () {
+    pub fn add_native(&mut self, name: String, value: fn(Vec<AST>) -> Result<AST, String>) -> () {
         self.natives.insert(name, value);
     }
 
-    pub fn get_native(
-        &mut self,
-        name: String,
-    ) -> Option<&fn(Vec<SpiritValue>) -> Result<SpiritValue, String>> {
+    pub fn get_native(&mut self, name: String) -> Option<&fn(Vec<AST>) -> Result<AST, String>> {
         self.natives.get(&name)
     }
 }

@@ -4,26 +4,41 @@ pub mod env;
 pub mod functions;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SpiritValue {
+pub enum AST {
+    Nil,
     Const(i64),
     Lit(String),
-    Let(String, Box<SpiritValue>, Box<SpiritValue>),
-    Function(String, Box<SpiritValue>),
-    Apply(Box<SpiritValue>, Box<SpiritValue>),
-    Native2(String, Box<SpiritValue>, Box<SpiritValue>),
-    Cond(Box<SpiritValue>, Box<SpiritValue>, Box<SpiritValue>),
+    Let(String, Box<AST>, Box<AST>),
+    Def(String, Box<AST>),
+    Function(String, Box<AST>),
+    Apply(Box<AST>, Box<AST>),
+    Native1(String, Box<AST>),
+    Native2(String, Box<AST>, Box<AST>),
+    Cond(Box<AST>, Box<AST>, Box<AST>),
 }
 
-fn eval(env: &mut env::Env, value: SpiritValue) -> Result<SpiritValue, String> {
-    return match value {
-        SpiritValue::Const(v) => Ok(SpiritValue::Const(v)),
+fn TRUE() -> AST {
+    AST::Lit("true".to_string())
+}
+fn FALSE() -> AST {
+    AST::Lit("false".to_string())
+}
 
-        SpiritValue::Lit(name) => match env.get_var(name) {
+fn eval(env: &mut env::Env, value: AST) -> Result<AST, String> {
+    if env.debug() {
+        println!("{:?}", value.clone());
+    }
+    return match value {
+        AST::Nil => Ok(AST::Nil),
+
+        AST::Const(v) => Ok(AST::Const(v)),
+
+        AST::Lit(name) => match env.get_var(name.clone()) {
             Some(expr) => Result::Ok(eval(env, expr.clone())?),
-            None => Result::Err("oops undefined variable".to_string()),
+            None => Ok(AST::Lit(name)),
         },
 
-        SpiritValue::Let(name, head, body) => {
+        AST::Let(name, head, body) => {
             let define = eval(env, *head)?;
             env.add_var(name.clone(), define);
             let res = eval(env, *body)?;
@@ -31,14 +46,27 @@ fn eval(env: &mut env::Env, value: SpiritValue) -> Result<SpiritValue, String> {
             Ok(res)
         }
 
-        SpiritValue::Function(argname, body) => Ok(SpiritValue::Function(argname, body)),
+        AST::Def(name, defined) => {
+            env.add_var(name.clone(), *defined);
+            Ok(AST::Nil)
+        }
 
-        SpiritValue::Apply(func, argvalue) => match eval(env, *func)? {
-            SpiritValue::Function(argname, funcbody) => {
+        AST::Function(argname, body) => Ok(AST::Function(argname, body)),
+
+        AST::Apply(func, argvalue) => match eval(env, *func)? {
+            AST::Function(argname, funcbody) => {
+                let computed_arg = eval(env, *argvalue)?;
                 env.frame_push();
-                env.add_var(argname.clone(), eval(&mut env.clone(), *argvalue)?);
-                let res = eval(env, *funcbody)?;
-                env.del_var(argname);
+                env.add_var(argname.clone(), computed_arg.clone());
+                let computed = eval(env, *funcbody)?;
+                let res = match computed {
+                    AST::Function(arg, body) => AST::Function(
+                        arg,
+                        Box::new(AST::Let(argname.clone(), Box::new(computed_arg), body)),
+                    ),
+                    other => other,
+                };
+                env.del_var(argname.clone());
                 env.frame_pop();
                 Ok(res)
             }
@@ -47,7 +75,18 @@ fn eval(env: &mut env::Env, value: SpiritValue) -> Result<SpiritValue, String> {
             }
         },
 
-        SpiritValue::Native2(name, arg0, arg1) => {
+        AST::Native1(name, arg0) => {
+            let mut nenv = env.clone();
+            match env.get_native(name.clone()) {
+                Some(f) => {
+                    let _arg0 = eval(&mut nenv, *arg0)?;
+                    f(vec![_arg0])
+                }
+                None => Err(format!("native function {} not defined", name)),
+            }
+        }
+
+        AST::Native2(name, arg0, arg1) => {
             let mut nenv = env.clone();
             match env.get_native(name.clone()) {
                 Some(f) => {
@@ -59,8 +98,8 @@ fn eval(env: &mut env::Env, value: SpiritValue) -> Result<SpiritValue, String> {
             }
         }
 
-        SpiritValue::Cond(cond, body, fallback) => {
-            if eval(env, *cond) != Ok(SpiritValue::Const(0)) {
+        AST::Cond(cond, body, fallback) => {
+            if eval(env, *cond) == Ok(AST::Lit("true".to_string())) {
                 eval(env, *body)
             } else {
                 eval(env, *fallback)
@@ -69,7 +108,7 @@ fn eval(env: &mut env::Env, value: SpiritValue) -> Result<SpiritValue, String> {
     };
 }
 
-fn parse_iter<Tokens>(tokens: &mut Tokens) -> Option<SpiritValue>
+fn parse_iter<Tokens>(tokens: &mut Tokens) -> Option<AST>
 where
     Tokens: Iterator<Item = String>,
 {
@@ -80,34 +119,41 @@ where
             let head = parse_iter(tokens)?;
             tokens.next().filter(|x| x == "in");
             let body = parse_iter(tokens)?;
-            Some(SpiritValue::Let(
-                name.to_string(),
-                Box::new(head),
-                Box::new(body),
-            ))
+            Some(AST::Let(name.to_string(), Box::new(head), Box::new(body)))
         }
 
-        "apply" => {
+        "@" => {
             let func = parse_iter(tokens)?;
             let arg = parse_iter(tokens)?;
-            Some(SpiritValue::Apply(Box::new(func), Box::new(arg)))
+
+            Some(AST::Apply(Box::new(func), Box::new(arg)))
+        }
+
+        "native1" => {
+            let name = tokens.next()?.to_string();
+            let arg0 = parse_iter(tokens)?;
+            Some(AST::Native1(name, Box::new(arg0)))
         }
 
         "native2" => {
             let name = tokens.next()?.to_string();
-            let lhs = parse_iter(tokens)?;
-            let rhs = parse_iter(tokens)?;
-            Some(SpiritValue::Native2(name, Box::new(lhs), Box::new(rhs)))
+            let arg0 = parse_iter(tokens)?;
+            let arg1 = parse_iter(tokens)?;
+            Some(AST::Native2(name, Box::new(arg0), Box::new(arg1)))
         }
 
-        "def" => {
+        "fn" => {
             let argname = tokens.next()?.to_string();
             tokens.next().filter(|x| x == "->");
             let funcbody = parse_iter(tokens)?;
-            Some(SpiritValue::Function(
-                argname.to_string(),
-                Box::new(funcbody),
-            ))
+            Some(AST::Function(argname.to_string(), Box::new(funcbody)))
+        }
+
+        "def" => {
+            let name = tokens.next()?.to_string();
+            tokens.next().filter(|x| x == "=");
+            let defined = parse_iter(tokens)?;
+            Some(AST::Def(name.to_string(), Box::new(defined)))
         }
 
         "if" => {
@@ -116,7 +162,7 @@ where
             let body = parse_iter(tokens)?;
             tokens.next().filter(|x| x == "else");
             let fallback = parse_iter(tokens)?;
-            Some(SpiritValue::Cond(
+            Some(AST::Cond(
                 Box::new(cond),
                 Box::new(body),
                 Box::new(fallback),
@@ -124,15 +170,37 @@ where
         }
 
         token => match token.parse::<i64>() {
-            Ok(value) => Some(SpiritValue::Const(value)),
-            Err(_) => Some(SpiritValue::Lit(token.to_string())),
+            Ok(value) => Some(AST::Const(value)),
+            Err(_) => Some(AST::Lit(token.to_string())),
         },
     }
 }
 
-fn parse(code: String) -> SpiritValue {
+fn parse(code: String) -> AST {
     let mut tokens = code.split_whitespace().map(|x| x.to_string());
     parse_iter(&mut tokens).unwrap()
+}
+
+fn repr(value: AST) -> String {
+    match value {
+        AST::Nil => "Nil".to_string(),
+        AST::Const(v) => format!("{}", v),
+        AST::Lit(s) => s,
+        AST::Let(name, head, body) => format!("let {} = {} in {}", name, repr(*head), repr(*body)),
+        AST::Def(name, _) => format!("def {} = <code>", name),
+        AST::Function(argname, body) => format!("fn {} -> {}", argname, repr(*body)),
+        AST::Apply(f, arg) => format!("@ {} {}", repr(*f), repr(*arg)),
+        AST::Native1(name, arg0) => format!("native {} {}", name, repr(*arg0)),
+        AST::Native2(name, arg0, arg1) => {
+            format!("native {} {} {}", name, repr(*arg0), repr(*arg1))
+        }
+        AST::Cond(cond, body, fallback) => format!(
+            "if {}  then {} else {}",
+            repr(*cond),
+            repr(*body),
+            repr(*fallback)
+        ),
+    }
 }
 
 fn read() -> String {
@@ -143,20 +211,37 @@ fn read() -> String {
     return buffer;
 }
 
-fn print(res:Result<SpiritValue, String>) -> () {
+fn print(res: Result<AST, String>) -> () {
     print!("> ");
     match res {
-        Ok(result) => 
-        println!("{:?}", result),
+        Ok(result) => println!("{:?}", result),
         Err(err) => println!("ERROR : {:?}", err),
     }
 }
 
+fn builtin(env: &mut env::Env, name: &str, code: &str) -> () {
+    env.add_var(name.to_string(), parse(code.to_string()));
+}
+
 fn main() {
     let mut env = env::Env::new(false);
+    env.add_native("native:print".to_string(), functions::print);
+
+    builtin(&mut env, "print", "fn x -> native1 native:print x");
+
     env.add_native("native:add".to_string(), functions::add);
+    env.add_native("native:sub".to_string(), functions::sub);
     env.add_native("native:mul".to_string(), functions::mul);
     env.add_native("native:eq".to_string(), functions::eq);
+    env.add_native("native:lt".to_string(), functions::lt);
+    env.add_native("native:gt".to_string(), functions::gt);
+
+    builtin(&mut env, "add", "fn x -> fn y -> native2 native:add x y");
+    builtin(&mut env, "sub", "fn x -> fn y -> native2 native:sub x y");
+    builtin(&mut env, "mul", "fn x -> fn y -> native2 native:mul x y");
+    builtin(&mut env, "eq", "fn x -> fn y -> native2 native:eq x y");
+    builtin(&mut env, "gt", "fn x -> fn y -> native2 native:gt x y");
+    builtin(&mut env, "lt", "fn x -> fn y -> native2 native:lt x y");
 
     loop {
         print(eval(&mut env, parse(read())));

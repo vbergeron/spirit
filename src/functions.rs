@@ -1,4 +1,4 @@
-use crate::{AST, FALSE, TRUE};
+use crate::AST;
 
 fn numeric_op(lhs: AST, rhs: AST, f: fn(i64, i64) -> i64) -> Result<AST, String> {
     match (lhs, rhs) {
@@ -50,9 +50,9 @@ pub fn mul(args: Vec<AST>) -> Result<AST, String> {
 pub fn eq(args: Vec<AST>) -> Result<AST, String> {
     let (lhs, rhs) = unpack2(args)?;
     if lhs == rhs {
-        Ok(TRUE())
+        Ok(AST::lit_true())
     } else {
-        Ok(FALSE())
+        Ok(AST::lit_false())
     }
 }
 
@@ -61,16 +61,16 @@ pub fn gt(args: Vec<AST>) -> Result<AST, String> {
     match (lhs, rhs) {
         (AST::Const(l), AST::Const(r)) => {
             if l > r {
-                Ok(TRUE())
+                Ok(AST::lit_true())
             } else {
-                Ok(FALSE())
+                Ok(AST::lit_false())
             }
         }
         (AST::Lit(l), AST::Lit(r)) => {
             if l > r {
-                Ok(TRUE())
+                Ok(AST::lit_true())
             } else {
-                Ok(FALSE())
+                Ok(AST::lit_false())
             }
         }
         (_, _) => Err("type error".to_string()),
@@ -82,16 +82,16 @@ pub fn lt(args: Vec<AST>) -> Result<AST, String> {
     match (lhs, rhs) {
         (AST::Const(l), AST::Const(r)) => {
             if l < r {
-                Ok(TRUE())
+                Ok(AST::lit_true())
             } else {
-                Ok(FALSE())
+                Ok(AST::lit_false())
             }
         }
         (AST::Lit(l), AST::Lit(r)) => {
             if l < r {
-                Ok(TRUE())
+                Ok(AST::lit_true())
             } else {
-                Ok(FALSE())
+                Ok(AST::lit_false())
             }
         }
         (_, _) => Err("type error".to_string()),

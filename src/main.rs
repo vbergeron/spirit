@@ -1,28 +1,11 @@
 use std::io::Write;
 
+pub mod ast;
 pub mod env;
 pub mod functions;
+pub mod lexer;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AST {
-    Nil,
-    Const(i64),
-    Lit(String),
-    Let(String, Box<AST>, Box<AST>),
-    Def(String, Box<AST>),
-    Function(String, Box<AST>),
-    Apply(Box<AST>, Box<AST>),
-    Native1(String, Box<AST>),
-    Native2(String, Box<AST>, Box<AST>),
-    Cond(Box<AST>, Box<AST>, Box<AST>),
-}
-
-fn TRUE() -> AST {
-    AST::Lit("true".to_string())
-}
-fn FALSE() -> AST {
-    AST::Lit("false".to_string())
-}
+use ast::AST;
 
 fn eval(env: &mut env::Env, value: AST) -> Result<AST, String> {
     if env.debug() {
@@ -106,6 +89,48 @@ fn eval(env: &mut env::Env, value: AST) -> Result<AST, String> {
             }
         }
     };
+}
+
+fn parse_next_lit<Tokens>(tokens: &mut Tokens) -> Option<String>
+where
+    Tokens: Iterator<Item = lexer::Token>,
+{
+    match tokens.next()? {
+        lexer::Token::Symbol(sym) => Some(sym),
+        _ => None,
+    }
+}
+
+fn parse_tokens<Tokens>(tokens: &mut Tokens) -> Option<AST>
+where
+    Tokens: Iterator<Item = lexer::Token>,
+{
+    match tokens.next()? {
+        lexer::Token::Let => {
+            let name = parse_next_lit(tokens)?;
+            tokens.next().filter(|x| *x == lexer::Token::Equal)?;
+            let head = parse_tokens(tokens)?;
+            tokens.next().filter(|x| *x == lexer::Token::In)?;
+            let body = parse_tokens(tokens)?;
+            Some(AST::Let(name, Box::new(head), Box::new(body)))
+        }
+        lexer::Token::Def => {
+            let name = parse_next_lit(tokens)?;
+            tokens.next().filter(|x| *x == lexer::Token::Equal)?;
+            let defined = parse_tokens(tokens)?;
+            Some(AST::Def(name, Box::new(defined)))
+        }
+        lexer::Token::At => {
+            let f = parse_tokens(tokens)?;
+            let x = parse_tokens(tokens)?;
+            Some(AST::Apply(Box::new(f), Box::new(x)))
+        }
+        lexer::Token::Fn => todo!(),
+        lexer::Token::If => todo!(),
+        lexer::Token::Number(num) => Some(AST::Const(num)),
+        lexer::Token::Symbol(sym) => Some(AST::Lit(sym)),
+        _ => None,
+    }
 }
 
 fn parse_iter<Tokens>(tokens: &mut Tokens) -> Option<AST>
@@ -214,7 +239,7 @@ fn read() -> String {
 fn print(res: Result<AST, String>) -> () {
     print!("> ");
     match res {
-        Ok(result) => println!("{:?}", result),
+        Ok(result) => println!("{}", repr(result)),
         Err(err) => println!("ERROR : {:?}", err),
     }
 }
@@ -225,6 +250,7 @@ fn builtin(env: &mut env::Env, name: &str, code: &str) -> () {
 
 fn main() {
     let mut env = env::Env::new(false);
+
     env.add_native("native:print".to_string(), functions::print);
 
     builtin(&mut env, "print", "fn x -> native1 native:print x");
